@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>流量哨兵 · 本机流量控制台</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/style.css">
+<!-- 令牌注入：下面这一行是服务端的约定占位行；meta 作为兜底来源（见 app.js 的 readToken） -->
+<meta name="tg-token" content="__TG_TOKEN__">
+<script>window.__TG_TOKEN__ = "__TG_TOKEN__";</script>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-inner">
+    <div class="brand">
+      <div class="brand-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2.6 4.7 5.5v5.9c0 4.6 3.1 8.2 7.3 9.7 4.2-1.5 7.3-5.1 7.3-9.7V5.5L12 2.6z"></path>
+          <path d="M8.4 12.2l2.4 2.4 4.8-4.9"></path>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>流量哨兵</h1>
+        <p>本机流量 · 跨境风险 · 截流控制</p>
+      </div>
+    </div>
+
+    <nav class="tabs" role="tablist" aria-label="主导航">
+      <button class="tab is-active" type="button" role="tab" data-tab="overview" aria-selected="true">概览</button>
+      <button class="tab" type="button" role="tab" data-tab="flows" aria-selected="false">流量流向</button>
+      <button class="tab" type="button" role="tab" data-tab="events" aria-selected="false">风险事件</button>
+      <button class="tab" type="button" role="tab" data-tab="settings" aria-selected="false">设置</button>
+    </nav>
+
+    <div class="header-tools">
+      <span class="pill" id="st-kill" hidden>全局断流中</span>
+      <button class="btn btn-ghost btn-sm" type="button" id="btn-refresh" title="立即刷新数据">刷新</button>
+    </div>
+  </div>
+
+  <div class="status-bar" role="status" aria-live="polite">
+    <span class="status-item"><i class="dot dot-idle" id="st-dot" aria-hidden="true"></i><span id="st-online">正在连接…</span></span>
+    <span class="status-sep" aria-hidden="true"></span>
+    <span class="status-item">管理员 <b id="st-admin">—</b></span>
+    <span class="status-item">策略 <b id="st-mode">—</b></span>
+    <span class="status-item">GeoIP <b id="st-geo">—</b></span>
+    <span class="status-item">更新 <b class="mono" id="st-updated">—</b></span>
+    <span class="status-item status-tail" id="st-note"></span>
+  </div>
+</header>
+
+<main class="app-main">
+  <div class="offline-bar" id="offline-bar" hidden>
+    <span class="offline-dot" aria-hidden="true"></span>
+    <span>与本地服务断开，正在重试…（数据为最后一次成功结果）</span>
+  </div>
+
+  <!-- ======================= 概览 ======================= -->
+  <section id="view-overview" class="view is-active" role="tabpanel" aria-label="概览">
+    <div class="kpi-grid">
+      <article class="card kpi">
+        <div class="kpi-head"><span class="kpi-label">实时下行速率</span><span class="kpi-tag">RX</span></div>
+        <div class="kpi-value mono" id="kpi-rx">—</div>
+        <canvas class="spark" id="spark-rx" width="220" height="36" aria-hidden="true"></canvas>
+        <div class="kpi-sub" id="kpi-rx-sub">近 60 次采样</div>
+      </article>
+      <article class="card kpi">
+        <div class="kpi-head"><span class="kpi-label">实时上行速率</span><span class="kpi-tag">TX</span></div>
+        <div class="kpi-value mono" id="kpi-tx">—</div>
+        <canvas class="spark" id="spark-tx" width="220" height="36" aria-hidden="true"></canvas>
+        <div class="kpi-sub" id="kpi-tx-sub">近 60 次采样</div>
+      </article>
+      <article class="card kpi">
+        <div class="kpi-head"><span class="kpi-label">今日总量</span><span class="kpi-tag">DAY</span></div>
+        <div class="kpi-value mono" id="kpi-day">—</div>
+        <div class="kpi-sub" id="kpi-day-sub">等待数据…</div>
+      </article>
+      <article class="card kpi">
+        <div class="kpi-head"><span class="kpi-label">本月总量</span><span class="kpi-tag">MONTH</span></div>
+        <div class="kpi-value mono" id="kpi-month">—</div>
+        <div class="kpi-sub" id="kpi-month-sub">等待数据…</div>
+      </article>
+      <article class="card kpi">
+        <div class="kpi-head"><span class="kpi-label">活跃连接数</span><span class="kpi-tag">FLOWS</span></div>
+        <div class="kpi-value mono" id="kpi-conns">—</div>
+        <div class="kpi-sub" id="kpi-conns-sub">等待数据…</div>
+      </article>
+      <article class="card kpi">
+        <div class="kpi-head"><span class="kpi-label">拦截规则数</span><span class="kpi-tag">BLOCK</span></div>
+        <div class="kpi-value mono" id="kpi-blocked">—</div>
+        <div class="kpi-sub" id="kpi-blocked-sub">等待数据…</div>
+      </article>
+    </div>
+
+    <div class="overview-cols">
+      <div class="col-main">
+        <section class="card risk-card">
+          <div class="card-head">
+            <h2>整机约谈风险</h2>
+            <span class="muted" id="risk-hint">技术性风险评分 0-100</span>
+          </div>
+          <div class="risk-body">
+            <div class="gauge-wrap">
+              <svg class="gauge" viewBox="0 0 160 160" width="160" height="160" aria-hidden="true">
+                <circle class="gauge-track" cx="80" cy="80" r="62"></circle>
+                <circle class="gauge-value" id="gauge-value" cx="80" cy="80" r="62"></circle>
+              </svg>
+              <div class="gauge-center">
+                <span class="gauge-score mono" id="risk-score">--</span>
+                <span class="chip lv-info" id="risk-level">等待数据</span>
+                <span class="gauge-caption">风险分</span>
+              </div>
+            </div>
+            <ul class="findings" id="findings">
+              <li class="empty">等待数据…</li>
+            </ul>
+          </div>
+          <p class="disclaimer is-clamped" id="risk-disclaimer" title="点击展开/收起"></p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>流量国家 / 地区分布</h2>
+            <span class="muted" id="countries-total"></span>
+          </div>
+          <div class="country-list" id="country-list">
+            <div class="empty">等待数据…</div>
+          </div>
+        </section>
+      </div>
+
+      <aside class="col-side">
+        <section class="card alerts-card">
+          <div class="card-head">
+            <h2>待处理提醒</h2>
+            <span class="badge" id="alerts-count">0</span>
+          </div>
+          <div class="alert-list" id="alert-list">
+            <div class="empty">暂无待处理提醒</div>
+          </div>
+        </section>
+
+        <section class="card control-card">
+          <div class="card-head">
+            <h2>控制</h2>
+            <span class="chip st-normal" id="kill-state">断流未开启</span>
+          </div>
+          <div class="admin-warning" id="admin-warning" hidden>未获得管理员权限，仅监控，无法自动截流</div>
+          <div class="control-grid">
+            <button class="btn btn-danger" type="button" data-action="kill_switch_on">紧急断流</button>
+            <button class="btn" type="button" data-action="kill_switch_off">恢复网络</button>
+            <button class="btn" type="button" data-action="clear_blocks">清除全部拦截</button>
+            <button class="btn" type="button" data-action="update_geoip">更新 IP 库</button>
+          </div>
+          <p class="hint" id="control-hint">等待数据…</p>
+        </section>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= 流量流向 ======================= -->
+  <section id="view-flows" class="view" role="tabpanel" aria-label="流量流向">
+    <section class="card">
+      <div class="toolbar">
+        <div class="segmented" id="flow-sorts" role="group" aria-label="排序方式">
+          <button class="seg is-active" type="button" data-sort="risk">风险优先</button>
+          <button class="seg" type="button" data-sort="traffic">流量优先</button>
+          <button class="seg" type="button" data-sort="country">国家聚合</button>
+        </div>
+        <input class="input search" id="flow-search" type="search" placeholder="搜索进程 / IP / 国家" autocomplete="off" spellcheck="false">
+        <label class="switch">
+          <input type="checkbox" id="show-lan">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span>显示局域网流量</span>
+        </label>
+        <span class="toolbar-note" id="flow-summary"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="flow-table">
+          <thead>
+            <tr>
+              <th data-key="process">进程</th>
+              <th data-key="remote">远端地址</th>
+              <th data-key="proto">协议</th>
+              <th data-key="country">归属地</th>
+              <th data-key="score">风险</th>
+              <th data-key="conns">连接数</th>
+              <th data-key="rx">下行</th>
+              <th data-key="tx">上行</th>
+              <th data-key="rate">当前速率</th>
+              <th data-key="status">状态</th>
+              <th class="th-actions">操作</th>
+            </tr>
+          </thead>
+          <tbody id="flow-body">
+            <tr><td colspan="11"><div class="empty">等待数据…</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+
+  <!-- ======================= 风险事件 ======================= -->
+  <section id="view-events" class="view" role="tabpanel" aria-label="风险事件">
+    <div class="stat-row">
+      <div class="card stat">
+        <span class="stat-label">近 24h 高危</span>
+        <b class="stat-value mono" id="ev-high">0</b>
+      </div>
+      <div class="card stat">
+        <span class="stat-label">近 24h 中危</span>
+        <b class="stat-value mono" id="ev-medium">0</b>
+      </div>
+      <div class="card stat">
+        <span class="stat-label">近 24h 事件</span>
+        <b class="stat-value mono" id="ev-total">0</b>
+      </div>
+      <div class="card stat">
+        <span class="stat-label">已拦截</span>
+        <b class="stat-value mono" id="ev-blocked">0</b>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>风险事件时间线</h2>
+        <div class="card-actions">
+          <span class="muted" id="events-updated">—</span>
+          <button class="btn btn-sm" type="button" id="events-refresh">刷新</button>
+          <button class="btn btn-sm" type="button" id="events-export">导出 CSV</button>
+        </div>
+      </div>
+      <ul class="timeline" id="event-list">
+        <li class="empty">等待数据…</li>
+      </ul>
+    </section>
+  </section>
+
+  <!-- ======================= 设置 ======================= -->
+  <section id="view-settings" class="view" role="tabpanel" aria-label="设置">
+    <form class="settings" id="settings-form" autocomplete="off">
+      <div class="settings-grid">
+        <section class="card">
+          <div class="card-head"><h2>策略</h2><span class="muted">保存后立即生效</span></div>
+
+          <div class="field">
+            <label for="mode">策略模式</label>
+            <select class="input" id="mode">
+              <option value="standard">标准（standard）</option>
+              <option value="strict">严格（strict）</option>
+              <option value="monitor">监控（monitor）</option>
+            </select>
+            <p class="field-note" id="mode-note"></p>
+          </div>
+
+          <div class="field">
+            <label for="auto-block-threshold">自动截流阈值 <output class="field-value mono" id="auto-block-out">70</output></label>
+            <input type="range" id="auto-block-threshold" min="40" max="95" step="1" value="70">
+            <p class="field-note">标准模式下风险分达到该值即自动切断；严格模式改用告警阈值作为截流线。</p>
+          </div>
+
+          <div class="field">
+            <label for="alert-threshold">告警阈值 <output class="field-value mono" id="alert-out">40</output></label>
+            <input type="range" id="alert-threshold" min="20" max="80" step="1" value="40">
+            <p class="field-note">风险分达到该值时提醒机主决策。</p>
+          </div>
+
+          <div class="field">
+            <label for="block-scope">拦截范围</label>
+            <select class="input" id="block-scope">
+              <option value="process">仅该进程到该 IP（process）</option>
+              <option value="any">该 IP 的所有连接（any）</option>
+            </select>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="alert-timeout">弹窗倒计时（秒）</label>
+              <input class="input" type="number" id="alert-timeout" min="10" max="600" step="5" value="60">
+            </div>
+            <div class="field">
+              <label for="max-alerts">告警频率上限（次/分钟）</label>
+              <input class="input" type="number" id="max-alerts" min="1" max="60" step="1" value="6">
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>流量配额</h2><span class="muted" id="quota-status"></span></div>
+
+          <label class="switch switch-row">
+            <input type="checkbox" id="quota-enabled">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span>启用流量配额</span>
+          </label>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="quota-daily">每日上限（GB）</label>
+              <input class="input" type="number" id="quota-daily" min="0" step="0.5" value="0">
+            </div>
+            <div class="field">
+              <label for="quota-monthly">每月上限（GB）</label>
+              <input class="input" type="number" id="quota-monthly" min="0" step="0.5" value="0">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="quota-warn">告警百分比 <output class="field-value mono" id="quota-warn-out">90</output></label>
+            <input type="range" id="quota-warn" min="10" max="100" step="5" value="90">
+            <p class="field-note">用量达到该比例时提醒；0 表示不限。</p>
+          </div>
+
+          <label class="switch switch-row">
+            <input type="checkbox" id="quota-kill">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span>超限后自动开启全局断流</span>
+          </label>
+
+          <div class="quota-bars">
+            <div class="quota-row">
+              <span class="quota-label">今日</span>
+              <div class="bar-track"><div class="bar-fill bar-primary" id="quota-day-bar" style="width:0%"></div></div>
+              <span class="quota-num mono" id="quota-day-num">0%</span>
+            </div>
+            <div class="quota-row">
+              <span class="quota-label">本月</span>
+              <div class="bar-track"><div class="bar-fill bar-primary" id="quota-month-bar" style="width:0%"></div></div>
+              <span class="quota-num mono" id="quota-month-num">0%</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>信任列表</h2><span class="muted">命中后不再提醒与截流</span></div>
+          <h3 class="sub-head">信任进程</h3>
+          <ul class="wl-list" id="wl-processes"><li class="empty">暂无信任进程</li></ul>
+          <h3 class="sub-head">信任 IP</h3>
+          <ul class="wl-list" id="wl-ips"><li class="empty">暂无信任 IP</li></ul>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>GeoIP 数据库</h2>
+            <button class="btn btn-sm" type="button" id="geo-update">更新 IP 库</button>
+          </div>
+          <div class="kv"><span>状态</span><b id="geo-state">—</b></div>
+          <div class="kv"><span>数据库类型</span><b id="geo-type">—</b></div>
+          <div class="kv"><span>构建日期</span><b id="geo-built">—</b></div>
+          <div class="kv"><span>缓存条目</span><b class="mono" id="geo-cached">—</b></div>
+          <div class="kv"><span>数据库路径</span><b class="mono small" id="geo-path">—</b></div>
+          <p class="field-note warn-text" id="geo-error" hidden></p>
+          <p class="field-note">数据库缺失时国家归属将全部显示为「未知」，跨境判定也会失效。</p>
+        </section>
+      </div>
+
+      <div class="settings-actions">
+        <button class="btn btn-primary btn-lg" type="submit" id="save-config">保存设置</button>
+        <span class="muted" id="settings-note">修改后需保存才会生效</span>
+      </div>
+    </form>
+  </section>
+</main>
+
+<footer class="app-footer">
+  <span>流量哨兵 <b class="mono" id="ft-version">v—</b></span>
+  <span>本工具仅做技术性风险提示，不构成法律意见</span>
+  <span>控制台 <b class="mono">http://127.0.0.1:8787/</b></span>
+</footer>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<script src="/static/app.js" defer></script>
+</body>
+</html>
